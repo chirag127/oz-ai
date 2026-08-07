@@ -1,0 +1,55 @@
+{
+	"name": "@chirag127/oz-ai",
+	"version": "0.2.0",
+	"description": "Single client-side AI client for the fleet — wraps g4f (@gpt4free/g4f.dev) with multi-provider failover (default auto-router → DeepInfra → Puter). Framework-agnostic TS. chat/complete/vision/image/listModels, streaming, AbortSignal. Change the provider strategy here, not in every site.",
+	"license": "MIT",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"src"
+	],
+	"scripts": {
+		"build": "tsup",
+		"test": "vitest run"
+	},
+	"keywords": [
+		"g4f",
+		"gpt4free",
+		"ai",
+		"llm",
+		"chat",
+		"no-key",
+		"failover",
+		"openai-compatible",
+		"oriz",
+		"design-system",
+		"framework-agnostic"
+	],
+	"dependencies": {
+		"@gpt4free/g4f.dev": "^1.1.2"
+	},
+	"devDependencies": {
+		"tsup": "^8.5.0",
+		"typescript": "^5.8.3",
+		"vitest": "^3.2.4"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/chirag127/oz-ai.git"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"allowScripts": {
+		"esbuild@0.27.7": true
+	}
+}

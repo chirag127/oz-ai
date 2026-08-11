@@ -1,6 +1,6 @@
 {
 	"name": "@chirag127/oz-ai",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Single client-side AI client for the fleet — wraps g4f (@gpt4free/g4f.dev) with multi-provider failover (default auto-router → DeepInfra → Puter). Framework-agnostic TS. chat/complete/vision/image/listModels, streaming, AbortSignal. Change the provider strategy here, not in every site.",
 	"license": "MIT",
 	"type": "module",
@@ -35,6 +35,7 @@
 		"framework-agnostic"
 	],
 	"dependencies": {
+		"@chirag127/keyless-ai": "^0.3.0",
 		"@gpt4free/g4f.dev": "^1.1.2"
 	},
 	"devDependencies": {

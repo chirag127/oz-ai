@@ -1,3 +1,4 @@
+import { chat as keylessChat } from '@chirag127/keyless-ai'
 import {
 	buildPayload,
 	buildVisionMessages,
@@ -153,16 +154,41 @@ let chain: Provider[] | null = null
 
 /**
  * Ordered provider failover chain. Built lazily from @gpt4free/g4f.dev.
- * default Client() (auto-router incl. PollinationsAI) → DeepInfra → Puter.
+ * @chirag127/keyless-ai FIRST (kilo→ovh→pollinations, no key, Node+browser).
+ * Then direct Pollinations fetch, then g4f.dev CDN clients.
  * THIS is the one place the fleet's provider strategy lives — reorder here.
  */
 async function providers(): Promise<Provider[]> {
 	if (chain) return chain
 	const built: Provider[] = []
-	// Direct keyless Pollinations FIRST — raw fetch, zero g4f.dev CDN dependency,
-	// so it works even when the CDN import hangs or the CDN client is broken.
-	// text.pollinations.ai/openai wants a concrete model ('openai'); mapped in
-	// directProvider. This is the primary path.
+	// @chirag127/keyless-ai FIRST — verified keyless, kilo→ovh→pollinations failover.
+	// Adapt its chat(messages, opts)→string into the G4FClient shape.
+	// keyless-ai only accepts text content; vision payloads (ContentPart[]) fall
+	// through to the g4f tail automatically via normal failover.
+	built.push({
+		name: 'keyless-ai',
+		client: {
+			chat: {
+				completions: {
+					async create(params: RequestPayload) {
+						// Reject vision payloads so failover moves to a vision-capable provider.
+						if (params.messages.some((m) => typeof m.content !== 'string'))
+							throw new OzAiError('keyless-ai: vision not supported')
+						const textMsgs = params.messages as Array<{
+							role: 'system' | 'user' | 'assistant'
+							content: string
+						}>
+						const text = await keylessChat(textMsgs, {
+							model: params.model,
+							temperature: params.temperature,
+						})
+						return { choices: [{ message: { content: text } }] }
+					},
+				},
+			},
+		},
+	})
+	// Direct keyless Pollinations — raw fetch, zero g4f.dev CDN dependency.
 	built.push(
 		directProvider('pollinations-direct', 'https://text.pollinations.ai/openai'),
 	)

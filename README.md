@@ -2,9 +2,9 @@
 
 [![npm](https://img.shields.io/npm/v/@chirag127/oz-ai)](https://www.npmjs.com/package/@chirag127/oz-ai)
 
-Single client-side AI client for the whole fleet. Framework-agnostic TS. Wraps **g4f** (`@gpt4free/g4f.dev`) — an umbrella over many free, no-key providers (default auto-router incl. PollinationsAI, DeepInfra, Puter, Together, HuggingFace) — with **multi-provider failover** so AI keeps working even when one provider dies. Sites never pick a provider; swap the strategy here only.
+Single client-side AI client for the whole fleet. Framework-agnostic TS. Primary backend: **`@chirag127/keyless-ai`** (kilo → ovh → pollinations, no API key, Node + browser). Secondary: direct Pollinations fetch + **g4f** (`@gpt4free/g4f.dev`) CDN clients as an extended failover tail.
 
-Built-in: ordered failover chain (`default → DeepInfra → Puter`), max 2 retries/provider, streaming via async-iterable, `AbortSignal`, graceful throw after ALL providers fail so callers can degrade.
+Built-in: ordered failover chain, max 2 retries/provider, streaming via async-iterable, `AbortSignal`, graceful throw after ALL providers fail so callers can degrade.
 
 ## Install
 
@@ -62,7 +62,7 @@ Also exports pure helpers `buildPayload`, `buildVisionMessages`, `extractContent
 
 ## Failover
 
-The chain lives in one place (`src/index.ts`). Change the order or set of providers HERE and every site inherits. Each provider gets up to 2 attempts before moving to the next; `OzAiError` throws only when all are exhausted.
+Chain lives in one place (`src/index.ts`). Order: **keyless-ai** (kilo→ovh→pollinations) → pollinations-direct (raw fetch) → g4f.dev CDN clients. Change the order or set of providers HERE and every site inherits. Each provider gets up to 2 attempts before moving to the next; `OzAiError` throws only when all are exhausted.
 
 ## License
 

@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chat, complete, listModels, OzAiError, setProviders } from './index'
+
+// Mock @chirag127/keyless-ai so tests never hit the network.
+vi.mock('@chirag127/keyless-ai', () => ({
+	chat: vi.fn(async () => 'keyless-reply'),
+}))
+
+import { chat as keylessMock } from '@chirag127/keyless-ai'
 
 const ok = (content: string) => ({
 	chat: {
@@ -36,7 +43,59 @@ const streamer = (chunks: string[]) => ({
 	},
 })
 
-afterEach(() => setProviders(null))
+afterEach(() => {
+	setProviders(null)
+	vi.mocked(keylessMock).mockResolvedValue('keyless-reply')
+})
+
+describe('keyless-ai primary backend', () => {
+	it('routes chat through keyless-ai and returns its text', async () => {
+		vi.mocked(keylessMock).mockResolvedValueOnce('from-keyless')
+		// Use setProviders to inject only the keyless-ai adapter, then verify it works.
+		// Build a minimal adapter matching what providers() builds for keyless-ai.
+		setProviders([
+			{
+				name: 'keyless-ai',
+				client: {
+					chat: {
+						completions: {
+							create: async (params) => {
+								const text = await keylessMock(params.messages as never, {
+									model: params.model,
+									temperature: params.temperature,
+								})
+								return { choices: [{ message: { content: text } }] }
+							},
+						},
+					},
+				},
+			},
+		])
+		expect(await complete('hi')).toBe('from-keyless')
+		expect(vi.mocked(keylessMock)).toHaveBeenCalledOnce()
+	})
+
+	it('falls through to g4f provider when keyless-ai throws', async () => {
+		vi.mocked(keylessMock).mockRejectedValue(new Error('keyless down'))
+		setProviders([
+			{
+				name: 'keyless-ai',
+				client: {
+					chat: {
+						completions: {
+							create: async (params) => {
+								const text = await keylessMock(params.messages as never, {})
+								return { choices: [{ message: { content: text } }] }
+							},
+						},
+					},
+				},
+			},
+			{ name: 'g4f-fallback', client: ok('g4f-reply') },
+		])
+		expect(await complete('hi')).toBe('g4f-reply')
+	})
+})
 
 describe('failover', () => {
 	it('falls through a dead provider to a live one', async () => {

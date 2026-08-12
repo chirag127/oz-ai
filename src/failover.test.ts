@@ -131,3 +131,66 @@ describe('failover', () => {
 		expect(models.sort()).toEqual(['m1', 'm2'])
 	})
 })
+
+describe('stall timeout + failover', () => {
+	it('times out a stalling provider and fails over to the next', async () => {
+		vi.useFakeTimers()
+
+		// Provider 1: hangs forever (never resolves).
+		const stalling = {
+			chat: {
+				completions: {
+					create: () => new Promise<never>(() => { /* intentional hang */ }),
+				},
+			},
+		}
+
+		setProviders([
+			{ name: 'staller', client: stalling },
+			{ name: 'good', client: ok('fallback-result') },
+		])
+
+		const resultPromise = complete('hi')
+
+		// Advance past ATTEMPT_TIMEOUT_MS (30 s default) × MAX_RETRIES to trigger withTimeout.
+		await vi.advanceTimersByTimeAsync(31_000 * 3)
+
+		const result = await resultPromise
+		expect(result).toBe('fallback-result')
+
+		vi.useRealTimers()
+	}, 10_000)
+
+	it('times out a mid-stream stalling provider and fails over', async () => {
+		vi.useFakeTimers()
+
+		// Provider 1: streams 1 chunk then stalls indefinitely.
+		const stallAfterOne = {
+			chat: {
+				completions: {
+					create: async () =>
+						(async function* () {
+							yield { choices: [{ delta: { content: 'partial' } }] }
+							// Never yields again — simulates mid-stream stall.
+							await new Promise<never>(() => { /* hang */ })
+						})(),
+				},
+			},
+		}
+
+		setProviders([
+			{ name: 'mid-staller', client: stallAfterOne },
+			{ name: 'good', client: ok('recovered') },
+		])
+
+		const resultPromise = complete('hi')
+
+		// Advance past ATTEMPT_TIMEOUT_MS so the outer withTimeout fires.
+		await vi.advanceTimersByTimeAsync(31_000 * 3)
+
+		const result = await resultPromise
+		expect(result).toBe('recovered')
+
+		vi.useRealTimers()
+	}, 10_000)
+})

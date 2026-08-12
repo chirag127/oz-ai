@@ -67,29 +67,53 @@ export interface Provider {
  * directly so failover survives the CDN client going bad.
  */
 function directProvider(name: string, url: string, forceModel = 'openai'): Provider {
+	/**
+	 * SSE reader with a per-chunk idle timer. If no chunk arrives within
+	 * STREAM_IDLE_TIMEOUT_MS the AbortController is fired, aborting the reader
+	 * and causing the outer failover to try the next provider.
+	 */
 	async function* sse(
 		body: ReadableStream<Uint8Array>,
+		ac: AbortController,
 	): AsyncGenerator<unknown, void, unknown> {
 		const reader = body.getReader()
 		const dec = new TextDecoder()
 		let buf = ''
-		for (;;) {
-			const { done, value } = await reader.read()
-			if (done) break
-			buf += dec.decode(value, { stream: true })
-			let nl: number
-			while ((nl = buf.indexOf('\n')) >= 0) {
-				const line = buf.slice(0, nl).trim()
-				buf = buf.slice(nl + 1)
-				if (!line.startsWith('data:')) continue
-				const data = line.slice(5).trim()
-				if (data === '[DONE]') return
-				try {
-					yield JSON.parse(data)
-				} catch {
-					/* skip non-JSON keepalive */
+
+		// Reset idle watchdog on each chunk received.
+		let idleTimer: ReturnType<typeof setTimeout> | null = null
+		const resetIdle = () => {
+			if (idleTimer !== null) clearTimeout(idleTimer)
+			idleTimer = setTimeout(() => {
+				ac.abort(new OzAiError(`${name} stream stalled`))
+			}, STREAM_IDLE_TIMEOUT_MS)
+		}
+
+		resetIdle() // start watchdog before first read
+		try {
+			for (;;) {
+				if (ac.signal.aborted)
+					throw ac.signal.reason ?? new OzAiError(`${name} aborted`)
+				const { done, value } = await reader.read()
+				if (done) break
+				resetIdle()
+				buf += dec.decode(value, { stream: true })
+				let nl: number
+				while ((nl = buf.indexOf('\n')) >= 0) {
+					const line = buf.slice(0, nl).trim()
+					buf = buf.slice(nl + 1)
+					if (!line.startsWith('data:')) continue
+					const data = line.slice(5).trim()
+					if (data === '[DONE]') return
+					try {
+						yield JSON.parse(data)
+					} catch {
+						/* skip non-JSON keepalive */
+					}
 				}
 			}
+		} finally {
+			if (idleTimer !== null) clearTimeout(idleTimer)
 		}
 	}
 	return {
@@ -102,10 +126,10 @@ function directProvider(name: string, url: string, forceModel = 'openai'): Provi
 						// `system` turn; fold it into the first user turn so only a
 						// plain user message is sent.
 						const msgs = foldSystem(params.messages)
-						// Abort a hung fetch fast (well under the outer 22s) so
-						// failover to the next provider fires quickly.
+						// Abort a hung fetch (connect timeout) AND mid-stream stalls via
+						// the shared AbortController passed into sse().
 						const ac = new AbortController()
-						const t = setTimeout(() => ac.abort(), DIRECT_FETCH_TIMEOUT_MS)
+						const t = setTimeout(() => ac.abort(new OzAiError(`${name} connect timed out`)), DIRECT_FETCH_TIMEOUT_MS)
 						try {
 							const res = await fetch(url, {
 								method: 'POST',
@@ -119,7 +143,8 @@ function directProvider(name: string, url: string, forceModel = 'openai'): Provi
 							})
 							if (!res.ok)
 								throw new OzAiError(`${name} HTTP ${res.status}`)
-							if (params.stream && res.body) return sse(res.body)
+							// Pass ac so sse() can abort itself on idle.
+							if (params.stream && res.body) return sse(res.body, ac)
 							return await res.json()
 						} finally {
 							clearTimeout(t)
@@ -149,6 +174,16 @@ function foldSystem(messages: Message[]): Message[] {
 }
 
 const MAX_RETRIES = 2
+
+/** Per-attempt outer timeout (ms). Configurable via OZ_AI_ATTEMPT_TIMEOUT_MS. */
+const ATTEMPT_TIMEOUT_MS =
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	Number((globalThis as any)?.process?.env?.OZ_AI_ATTEMPT_TIMEOUT_MS) || 30_000
+
+/** Idle watchdog for SSE streams: abort if no chunk arrives within this window (ms). */
+const STREAM_IDLE_TIMEOUT_MS =
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	Number((globalThis as any)?.process?.env?.OZ_AI_STREAM_IDLE_TIMEOUT_MS) || 30_000
 
 let chain: Provider[] | null = null
 
@@ -243,12 +278,10 @@ export function setProviders(next: Provider[] | null): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-const ATTEMPT_TIMEOUT_MS = 22000
-
 /** Cap the g4f.dev CDN import so a hanging CDN never stalls the direct provider. */
 const CDN_IMPORT_TIMEOUT_MS = 6000
 
-/** Abort a hung direct-provider fetch fast so failover fires within the outer budget. */
+/** Abort a hung direct-provider fetch (connect phase) before stream starts. */
 const DIRECT_FETCH_TIMEOUT_MS = 12000
 
 /** Reject if fn outruns ATTEMPT_TIMEOUT_MS so a hung provider can't stall failover. */

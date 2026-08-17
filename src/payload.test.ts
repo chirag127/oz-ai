@@ -9,9 +9,9 @@ import {
 } from './payload'
 
 describe('buildPayload', () => {
-	it('defaults model to gpt-4o-mini', () => {
+	it("defaults model to 'auto'", () => {
 		const p = buildPayload([{ role: 'user', content: 'hi' }])
-		expect(p.model).toBe('gpt-4o-mini')
+		expect(p.model).toBe('auto')
 		expect(p.messages).toHaveLength(1)
 		expect(p.temperature).toBeUndefined()
 		expect(p.stream).toBeUndefined()

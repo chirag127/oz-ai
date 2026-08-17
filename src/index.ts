@@ -195,18 +195,21 @@ let chain: Provider[] | null = null
 
 /**
  * Ordered provider failover chain. Built lazily from @gpt4free/g4f.dev.
- * @chirag127/keyless-ai FIRST (kilo→ovh→pollinations, no key, Node+browser).
- * Then direct Pollinations fetch, then g4f.dev CDN clients.
+ * In NODE: @chirag127/keyless-ai FIRST (kilo→ovh, no key). In the BROWSER those
+ * hosts are CORS-blocked (api.kilo.ai has no Access-Control-Allow-Origin) or 404
+ * (ovh), so keyless-ai is SKIPPED and the chain leads with the CORS-safe direct
+ * Pollinations fetch + the g4f.dev CDN client ('auto').
  * THIS is the one place the fleet's provider strategy lives — reorder here.
  */
+const IS_BROWSER = typeof window !== 'undefined'
+
 async function providers(): Promise<Provider[]> {
 	if (chain) return chain
 	const built: Provider[] = []
-	// @chirag127/keyless-ai FIRST — verified keyless, kilo→ovh→pollinations failover.
-	// Adapt its chat(messages, opts)→string into the G4FClient shape.
-	// keyless-ai only accepts text content; vision payloads (ContentPart[]) fall
-	// through to the g4f tail automatically via normal failover.
-	built.push({
+	// @chirag127/keyless-ai — kilo→ovh→pollinations. NODE ONLY: kilo is CORS-blocked
+	// and ovh 404s from a browser origin, so including it there just burns the
+	// failover budget on guaranteed failures before the CORS-safe providers.
+	if (!IS_BROWSER) built.push({
 		name: 'keyless-ai',
 		client: {
 			chat: {
@@ -229,10 +232,13 @@ async function providers(): Promise<Provider[]> {
 			},
 		},
 	})
-	// Direct keyless Pollinations — raw fetch, zero g4f.dev CDN dependency.
-	built.push(
-		directProvider('pollinations-direct', 'https://text.pollinations.ai/openai'),
+	// Direct keyless Pollinations — raw fetch, zero g4f.dev CDN dependency. In the
+	// browser this is a FALLBACK behind the g4f CDN client (assembled below); in
+	// Node it follows keyless-ai. Held aside so ordering can differ per environment.
+	const pollinationsDirect = directProvider(
+		'pollinations-direct', 'https://text.pollinations.ai/openai',
 	)
+	if (!IS_BROWSER) built.push(pollinationsDirect)
 	// g4f.dev CDN client is a BONUS layer of providers. Load it time-boxed and
 	// non-fatally: a slow/broken CDN must never stall the direct provider above.
 	// Browser-safe — the bare npm specifier ('@gpt4free/g4f.dev') would leave an
@@ -256,6 +262,12 @@ async function providers(): Promise<Provider[]> {
 	}
 	if (g4f) {
 		const Client = g4f.Client ?? g4f.default
+		// g4f.dev CDN client FIRST — the bare `new Client()` ('auto') is the most
+		// reliable keyless route in the browser. Puter is the explicit fallback.
+		if (Client) built.push({ name: 'g4f', client: new Client() })
+		if (g4f.Puter) built.push({ name: 'Puter', client: new g4f.Puter() })
+		// Remaining CDN-mediated providers as a further tail. `ovh` dropped — it
+		// 404s (oai.endpoints.kepler.ai.cloud.ovh.net returns Not Found).
 		if (g4f.PollinationsAI)
 			built.push({ name: 'PollinationsAI', client: new g4f.PollinationsAI() })
 		if (Client) {
@@ -264,15 +276,14 @@ async function providers(): Promise<Provider[]> {
 				['g4f.space/groq', 'https://g4f.space/api/groq'],
 				['g4f.space/gemini', 'https://g4f.space/api/gemini'],
 				['llm7', 'https://api.llm7.io/v1'],
-				['ovh', 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1'],
 			] as const)
 				built.push({ name, client: new Client({ baseUrl }) })
-			built.push({ name: 'default', client: new Client() })
 		}
 		if (g4f.DeepInfra)
 			built.push({ name: 'DeepInfra', client: new g4f.DeepInfra() })
-		if (g4f.Puter) built.push({ name: 'Puter', client: new g4f.Puter() })
 	}
+	// Browser: g4f CDN + Puter led; pollinations-direct is the final fallback.
+	if (IS_BROWSER) built.push(pollinationsDirect)
 	chain = built
 	return built
 }

@@ -141,8 +141,14 @@ function directProvider(name: string, url: string, forceModel = 'openai'): Provi
 								}),
 								signal: ac.signal,
 							})
-							if (!res.ok)
-								throw new OzAiError(`${name} HTTP ${res.status}`)
+							if (!res.ok) {
+								const err = new OzAiError(`${name} HTTP ${res.status}`)
+								// Auth/credit/forbidden are PERMANENT for this provider —
+								// don't waste retries+backoff; abandon it and move on.
+								;(err as OzAiError & { permanent?: boolean }).permanent =
+									res.status === 401 || res.status === 402 || res.status === 403
+								throw err
+							}
 							// Pass ac so sse() can abort itself on idle.
 							if (params.stream && res.body) return sse(res.body, ac)
 							return await res.json()
@@ -355,6 +361,9 @@ async function withFailover<T>(
 			} catch (e) {
 				if (signal?.aborted) throw new OzAiError('aborted')
 				last = e
+				// Permanent provider errors (auth/credit/forbidden) won't recover on
+				// retry — stop retrying THIS provider and advance to the next.
+				if ((e as { permanent?: boolean })?.permanent) break
 			}
 		}
 	}

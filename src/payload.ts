@@ -9,7 +9,9 @@ export type ContentPart =
 	| { type: 'image_url'; image_url: { url: string } }
 
 export interface ChatOptions {
-	/** g4f model id. Default 'gpt-4o-mini' (auto-router picks a live provider). */
+	/** g4f model id. Default 'auto' — lets the provider route to a live model
+	 * instead of pinning a specific id that may become auth/credit-gated (which
+	 * also disables model-cycling failover). Pass an explicit id only when needed. */
 	model?: string
 	/** Abort the request. */
 	signal?: AbortSignal
@@ -32,7 +34,7 @@ export function buildPayload(
 	options: ChatOptions = {},
 ): RequestPayload {
 	const payload: RequestPayload = {
-		model: options.model ?? 'gpt-4o-mini',
+		model: options.model ?? 'auto',
 		messages,
 	}
 	if (options.temperature !== undefined)
